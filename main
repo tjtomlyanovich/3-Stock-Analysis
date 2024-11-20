@@ -1,0 +1,102 @@
+# Importing necessary libraries
+import yfinance as yf
+import pandas as pd
+import dash
+from dash import dcc, html
+from dash.dependencies import Input, Output
+import plotly.graph_objects as go
+
+# Initialize the Dash app
+app = dash.Dash(__name__)
+
+# Function to fetch historical stock data
+def fetch_stock_data(ticker):
+    return yf.download(ticker, start="2018-01-01", end="2023-01-01")
+
+# Function to calculate annual returns
+def calculate_annual_returns(data):
+    annual_returns = data['Adj Close'].resample('Y').ffill().pct_change()
+    return annual_returns
+
+# Function to calculate moving averages
+def calculate_moving_averages(data, windows):
+    moving_averages = {}
+    for window in windows:
+        moving_averages[f"MA_{window}"] = data['Adj Close'].rolling(window).mean()
+    return pd.DataFrame(moving_averages)
+
+# Layout of the web app
+app.layout = html.Div([
+    html.H1("Interactive Stock Analysis", style={'textAlign': 'center'}),
+    
+    # Input for stock tickers
+    html.Div([
+        html.Label("Enter stock tickers (comma-separated, e.g., AAPL, MSFT, GOOG):"),
+        dcc.Input(id='stock-tickers', type='text', value='AAPL, MSFT, GOOG', style={'width': '50%'}),
+        html.Button("Analyze", id='analyze-button', n_clicks=0)
+    ], style={'textAlign': 'center', 'margin': '20px'}),
+    
+    # Graphs for visualizations
+    html.Div([
+        dcc.Graph(id='price-movement-chart'),
+        dcc.Graph(id='annual-returns-chart'),
+        dcc.Graph(id='moving-averages-chart'),
+        dcc.Graph(id='trading-volume-chart')
+    ])
+])
+
+# Callback for updating the graphs
+@app.callback(
+    [
+        Output('price-movement-chart', 'figure'),
+        Output('annual-returns-chart', 'figure'),
+        Output('moving-averages-chart', 'figure'),
+        Output('trading-volume-chart', 'figure')
+    ],
+    [Input('analyze-button', 'n_clicks')],
+    [Input('stock-tickers', 'value')]
+)
+def update_graphs(n_clicks, tickers_input):
+    tickers = [ticker.strip() for ticker in tickers_input.split(',')]
+    stock_data = {}
+    annual_returns = {}
+    moving_averages = {}
+    
+    # Fetch data for each ticker
+    for ticker in tickers:
+        stock_data[ticker] = fetch_stock_data(ticker)
+        annual_returns[ticker] = calculate_annual_returns(stock_data[ticker])
+        moving_averages[ticker] = calculate_moving_averages(stock_data[ticker], [50, 200])
+
+    # Price movement chart
+    price_fig = go.Figure()
+    for ticker in tickers:
+        price_fig.add_trace(go.Scatter(x=stock_data[ticker].index, y=stock_data[ticker]['Adj Close'], mode='lines', name=ticker))
+    price_fig.update_layout(title="Price Movement", xaxis_title="Date", yaxis_title="Price")
+
+    # Annual returns chart
+    annual_returns_df = pd.concat(annual_returns, axis=1)
+    annual_returns_df.columns = tickers
+    annual_fig = go.Figure()
+    for ticker in tickers:
+        annual_fig.add_trace(go.Bar(x=annual_returns_df.index.year, y=annual_returns_df[ticker], name=ticker))
+    annual_fig.update_layout(title="Annual Returns", xaxis_title="Year", yaxis_title="Return", barmode='group')
+
+    # Moving averages chart
+    ma_fig = go.Figure()
+    for ticker in tickers:
+        for ma_col in moving_averages[ticker].columns:
+            ma_fig.add_trace(go.Scatter(x=stock_data[ticker].index, y=moving_averages[ticker][ma_col], mode='lines', name=f"{ticker} {ma_col}"))
+    ma_fig.update_layout(title="Moving Averages", xaxis_title="Date", yaxis_title="Price")
+
+    # Trading volume chart
+    volume_fig = go.Figure()
+    for ticker in tickers:
+        volume_fig.add_trace(go.Bar(x=stock_data[ticker].index, y=stock_data[ticker]['Volume'], name=ticker))
+    volume_fig.update_layout(title="Trading Volume", xaxis_title="Date", yaxis_title="Volume", barmode='overlay')
+
+    return price_fig, annual_fig, ma_fig, volume_fig
+
+# Run the app
+if __name__ == '__main__':
+    app.run_server(debug=True)
